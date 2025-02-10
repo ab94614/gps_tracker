@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS Tracker with Recommendations</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            text-align: center;
+        }
+        #map {
+            width: 100%;
+            height: 500px;
+        }
+        #info {
+            padding: 10px;
+            background: #f4f4f4;
+        }
+        #recommend-btn {
+            margin: 10px 0;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #recommendations {
+            margin-top: 10px;
+            padding: 10px;
+            background: #fff;
+            border: 1px solid #ddd;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>GPS Tracker with Recommendations</h1>
+    <div id="info">
+        <button id="recommend-btn" onclick="recommendNearby()">Get Nearby Recommendations</button>
+        <p id="status">Waiting for GPS signal...</p>
+        <p id="latitude">Latitude: --</p>
+        <p id="longitude">Longitude: --</p>
+        <p id="distance">Total Distance: 0.00 km</p>
+        <p id="calories">Calories Burned: 0.00 kcal</p>
+        <div id="recommendations"></div>
+    </div>
+    <div id="map"></div>
+
+    <script 
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAzn902h-tBirv1bgHEQz-8coAI7981L8k&callback=initMap&libraries=geometry,places&v=beta&loading=async" 
+        async 
+        defer>
+    </script>
+
+    <script>
+        let map, marker, pathCoordinates = [], polyline, totalDistance = 0;
+        const CALORIES_PER_KM = 50;
+        let placesService;
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById("map"), {
+                center: { lat: 25.0330, lng: 121.5654 },
+                zoom: 15,
+            });
+
+            placesService = new google.maps.places.PlacesService(map);
+            marker = new google.maps.Marker({
+                map: map,
+                position: { lat: 25.0330, lng: 121.5654 },
+                title: "Current Location",
+            });
+
+            if (navigator.geolocation) {
+                navigator.permissions.query({ name: 'geolocation' }).then(permissionStatus => {
+                    if (permissionStatus.state === 'granted' || permissionStatus.state === 'prompt') {
+                        navigator.geolocation.watchPosition(updateLocation, handleError, {
+                            enableHighAccuracy: true,
+                            maximumAge: 0
+                        });
+                    } else {
+                        document.getElementById("status").innerText = "GPS Permission Denied. Please enable location services.";
+                    }
+                });
+            } else {
+                document.getElementById("status").innerText = "Geolocation is not supported by this browser.";
+            }
+        }
+
+        function updateLocation(position) {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            document.getElementById("status").innerText = "GPS Signal Acquired";
+            document.getElementById("latitude").innerText = `Latitude: ${lat}`;
+            document.getElementById("longitude").innerText = `Longitude: ${lng}`;
+            updateMap(lat, lng);
+            updatePath(lat, lng);
+        }
+
+        function handleError(error) {
+            switch (error.code) {
+                case error.PERMISSION_DENIED:
+                    document.getElementById("status").innerText = "Permission Denied: Enable location services in browser settings.";
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    document.getElementById("status").innerText = "Location information is unavailable.";
+                    break;
+                case error.TIMEOUT:
+                    document.getElementById("status").innerText = "Request timed out. Please try again.";
+                    break;
+                default:
+                    document.getElementById("status").innerText = "An unknown error occurred.";
+            }
+        }
+
+        function updateMap(lat, lng) {
+            const position = { lat, lng };
+            marker.setPosition(position);
+            map.panTo(position);
+        }
+
+        function updatePath(lat, lng) {
+            if (pathCoordinates.length > 0) {
+                const lastPoint = pathCoordinates[pathCoordinates.length - 1];
+                totalDistance += calculateDistance(lastPoint.lat, lastPoint.lng, lat, lng);
+            }
+
+            pathCoordinates.push({ lat, lng });
+            document.getElementById("distance").innerText = `Total Distance: ${totalDistance.toFixed(2)} km`;
+            document.getElementById("calories").innerText = `Calories Burned: ${(totalDistance * CALORIES_PER_KM).toFixed(2)} kcal`;
+
+            if (!polyline) {
+                polyline = new google.maps.Polyline({
+                    map: map,
+                    path: pathCoordinates,
+                    geodesic: true,
+                    strokeColor: "#FF0000",
+                    strokeOpacity: 1.0,
+                    strokeWeight: 2
+                });
+            } else {
+                polyline.setPath(pathCoordinates);
+            }
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function recommendNearby() {
+            if (!pathCoordinates.length) {
+                alert("Please wait for GPS data to be received.");
+                return;
+            }
+
+            const currentPosition = pathCoordinates[pathCoordinates.length - 1];
+            const request = {
+                location: currentPosition,
+                radius: 1000,
+                type: ["restaurant", "tourist_attraction"]
+            };
+
+            placesService.nearbySearch(request, (results, status) => {
+                if (status === google.maps.places.PlacesServiceStatus.OK) {
+                    displayRecommendations(results);
+                } else {
+                    console.error("Places API request failed:", status);
+                }
+            });
+        }
+
+        function displayRecommendations(results) {
+            const recommendationsDiv = document.getElementById("recommendations");
+            recommendationsDiv.innerHTML = "";
+
+            results.forEach((place, index) => {
+                const placeElement = document.createElement("div");
+                placeElement.innerHTML = `<strong>${index + 1}. ${place.name}</strong><br>
+                    Address: ${place.vicinity}<br>`;
+                if (place.rating) {
+                    placeElement.innerHTML += `Rating: ${place.rating}/5 (${place.user_ratings_total} reviews)<br>`;
+                }
+                recommendationsDiv.appendChild(placeElement);
+            });
+        }
+    </script>
+</body>
+</html>
